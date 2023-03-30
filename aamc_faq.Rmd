@@ -1,0 +1,546 @@
+---
+title: "AAMC Revenue and Expenditure Data"
+author: "Nosa Lawani"
+date: "10/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(scales)
+library(readxl)
+library(DT)
+library(rmarkdown)
+library(ggpubr)
+```
+
+```{r revenue_source, warning = FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+read_excel("aamc_revenue_source.xlsx") %>% 
+  rename(school = `...1`) %>% 
+  mutate(across(.cols = -school, ~str_replace_all(., "\\$|,", ""))) %>% 
+  mutate(across(.cols = -school, as.numeric)) %>% 
+  drop_na() %>% 
+  rename(Tuition = `Total Tuition and Fees Revenues`,
+         federal_grants = `Total Federal Research Grants and Contracts`,
+         other_grants = `Other Grants and Contracts`,
+         `Gov. and Parent Support` = `Total Government and Parent Support`,
+         Hospital = `Total Expenditures and Transfers from Hospital Funds`,
+         `Gifts and Endowment` = `Total Revenues from Gifts and Endowment Funds`) %>% 
+  arrange(desc(Tuition)) %>% 
+  rowwise() %>% 
+  mutate(total = sum(across(.cols = -school)))  %>% 
+  mutate(`Total Grants` = federal_grants + other_grants) %>% 
+  select(-other_grants, -federal_grants) %>% 
+  select(school, Hospital, `Total Grants`, `Gifts and Endowment`, `Gov. and Parent Support`, Tuition, total)  -> a_filtered
+
+a_filtered %>% 
+  mutate(across(-school, ~formatC(., format = "f", big.mark = ",", digits = 0)))  -> a_filtered_comma
+  
+a_filtered %>% 
+  mutate(across(.cols = -c("school", "total"), ~./total)) %>% 
+  arrange(desc(Hospital)) %>% 
+  mutate(across(-c("school", "total"), ~(round(.*100, digits = 1))))-> a_filtered_percent
+
+
+a_filtered_long <- a_filtered %>% 
+  mutate(across(-school, ~./100000000)) %>% 
+  pivot_longer(cols = -c("school", "total"), 
+               names_to = "funding_type", 
+               values_to = "funding") 
+
+funding_type_pal <- setNames(object = hue_pal(h = c(20, 360), c = 70)(5), nm = c("Total Grants", "Hospital", "Gifts and Endowment", "Tuition", "Gov. and Parent Support"))
+
+
+a_filtered_long %>% 
+  filter(school %in% c("Harvard", "Duke", "Washington U St Louis", "Johns Hopkins", "Stanford", "Columbia-Vagelos", "Michigan", "Vanderbilt")) %>% 
+  filter(funding_type %in% c("Total Grants", "Hospital", "Gifts and Endowment")) %>% 
+  ggplot(aes(y = fct_reorder(school, total), x = funding, fill = fct_reorder(funding_type, funding))) +
+  geom_col(position = "stack") +
+  scale_x_continuous(breaks = seq(0, 40, 2)) +
+  labs(title = "Revenue by Source", 
+       subtitle = "Revenues from Tuition and Support are excluded from this chart",
+       x = "Dollars (Hundreds of Millions)", 
+       y = "",
+       fill = "",
+       caption = "AAMC (2019)") +
+  scale_fill_manual(values = funding_type_pal[1:3]) +
+  theme(plot.title = element_text(size = 23),
+        plot.subtitle = element_text(size = 18),
+        axis.title = element_text(size = 18),
+        axis.text = element_text(size = 18, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 15),
+        legend.position = "top")
+```
+
+```{r revenue_source_2, warning = FALSE, message=FALSE, fig.width = 12, fig.height = 11}
+mean_row_a_percent <- a_filtered_percent %>% 
+  ungroup() %>% 
+  summarize(across(-c("school"), ~mean(.))) %>% 
+  mutate(school = "All School Mean") %>% 
+  select(school, 1:6) 
+
+
+a_filtered_percent %>% 
+  filter(school %in% c("Harvard", "Duke", "Washington U St Louis", "Johns Hopkins", "Stanford", "Columbia-Vagelos", "Michigan", "Vanderbilt")) %>% 
+  bind_rows(mean_row_a_percent) %>% 
+  pivot_longer(cols = -c("school", "total"),
+               names_to = "funding_type",
+               values_to = "percent") %>% 
+  ggplot(aes(y = fct_reorder(school, total), x = percent, fill = fct_reorder(funding_type, percent))) +
+  geom_col(position = "stack") +
+  geom_text(aes(label = if_else(percent >= 5, str_c(round(percent, digits = 0), "%"), "")),
+            position = position_stack(vjust = 0.5),
+            size = 5, 
+            color = "black") +
+  scale_x_continuous(labels = c("0%", "25%", "50%", "75%", "100%")) +
+  labs(title = "Percent Revenue by Source",
+       x = "", 
+       y = "", 
+       fill = "",
+       caption = "AAMC (2019)") +
+  scale_fill_manual(values = funding_type_pal) +
+   theme(plot.title = element_text(size = 23),
+        plot.subtitle = element_text(size = 18),
+        axis.text = element_text(size = 18, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 15),
+        legend.position = "top")
+```
+
+
+
+```{r grants, warning = FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+read_excel("aamc_grants.xlsx") %>% 
+  rename(school = `...1`) %>% 
+  mutate(across(.cols = -school, ~str_replace_all(., "\\$|,", ""))) %>% 
+  mutate(across(.cols = -school, as.numeric)) %>% 
+  drop_na() %>% 
+  rename(direct_recorded = `Direct Federal Research Grants and Contracts - Recorded`,
+         direct_unrecorded = `Direct Federal Research Grants and Contracts - Not Recorded`,
+         indirect_recorded = `Indirect Federal Research Grants and Contracts - Recorded`,
+         indirect_unrecorded = `Indirect Federal Research Grants and Contracts - Not Recorded`, 
+         total = `Total Federal Research Grants and Contracts`) %>% 
+  arrange(desc(direct_unrecorded))-> b
+
+b_percent_filtered <- b %>% 
+  mutate(recorded_percent = (direct_recorded + indirect_recorded) / total,
+         unrecorded_percent = (direct_unrecorded + indirect_unrecorded) /total,
+         recorded_dollars = direct_recorded + indirect_recorded,
+         unrecorded_dollars = direct_unrecorded + indirect_unrecorded) %>% 
+  select(-contains("direct")) %>% 
+   arrange(desc(recorded_percent)) %>% 
+   mutate(across(contains("percent"), ~(round(.*100, digits = 1))))
+
+b_percent_filtered %>% 
+  filter(school %in% c("Harvard", "Duke", "Washington U St Louis", "Johns Hopkins", "Stanford", "Columbia-Vagelos", "Michigan", "Vanderbilt")) %>% 
+  pivot_longer(contains("dollars"),
+               names_to = "dollar_type", 
+               values_to = "dollars") %>% 
+  mutate(dollars = dollars / 10^8) %>% 
+  ggplot(aes(dollars, fct_reorder(school, total), fill = dollar_type)) +
+  geom_col() +
+    geom_text(aes(label = str_c("$", formatC(stat(x)*10^8, big.mark = ",", format = "d")), group = school), 
+            stat = 'summary', fun = sum, vjust = .5, hjust = -.1, size = 5) +
+   labs(title  = "Recorded and Unrecorded Federal Grants",
+       y = "", 
+       x = "Dollars (Hundreds of Millions)", 
+       fill = "Grant Type",
+       caption = "AAMC (2019)") +
+  scale_fill_manual(labels = c("Recorded", "Unrecorded"), values = hue_pal(c = 70)(2)) +
+  scale_x_continuous(limits = c(0, 25)) +
+   theme(plot.title = element_text(size = 23),
+        plot.subtitle = element_text(size = 15),
+        axis.text = element_text(size = 15, color = "black"),
+        axis.title = element_text(size = 15),
+         legend.text = element_text(size = 15),
+        legend.title = element_text(size = 18),
+        plot.caption = element_text(size = 15))
+```
+
+```{r grants_2, warning = FALSE, message=FALSE, fig.width = 12, fig.height = 11}
+mean_row_b <- b_percent_filtered %>% 
+  summarize(across(-c("school"), ~mean(., na.rm = TRUE)))%>% 
+  mutate(school = "All School Mean") %>% 
+  
+  # so that it appears at the bottom of the chart, given our fct_reorder()
+  
+  mutate(unrecorded_dollars = 0)
+
+b_percent_filtered %>% 
+  filter(school %in% c("Harvard", "Duke", "Washington U St Louis", "Johns Hopkins", "Stanford", "Columbia-Vagelos", "Michigan", "Vanderbilt")) %>%
+  bind_rows(mean_row_b) %>% 
+  pivot_longer(contains("percent"),
+               names_to = "percent_type", 
+               values_to = "percent") %>%
+  ggplot(aes(percent, fct_reorder(school, unrecorded_dollars / total), fill = percent_type)) +
+  geom_col() +
+  geom_text(aes(label = if_else(percent >= 5, str_c(round(percent, digits = 0), "%"), "")),
+            position = position_stack(vjust = 0.5),
+            size = 5, 
+            color = "black") +
+  labs(title  = "Percent Recorded and Unrecorded Federal Grants",
+       subtitle = "With the exception of Harvard and Vanderbilt, most schools primarily \nreceive recorded grant dollars", 
+       y = "", 
+       x = "",
+       fill = "Grant Type",
+       caption = "AAMC (2019)") +
+  scale_fill_manual(labels = c("Recorded", "Unrecorded"), values = hue_pal(c = 70)(2)) +
+  scale_x_continuous(labels = c("0%", "25%", "50%", "75%", "100%")) +
+   theme(plot.title = element_text(size = 23),
+        plot.subtitle = element_text(size = 15),
+        axis.text = element_text(size = 15, color = "black"),
+        axis.title = element_text(size = 15),
+         legend.text = element_text(size = 15),
+        legend.title = element_text(size = 18),
+        plot.caption = element_text(size = 15))
+```
+
+```{r hospital_type, warning = FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+read_excel("aamc_hospital_type.xlsx") %>% 
+  rename(school = `...1`) %>% 
+  mutate(across(.cols = -school, ~str_replace_all(., "\\$|,", ""))) %>% 
+  mutate(across(.cols = -school, as.numeric)) %>% 
+  drop_na() %>% 
+  rename(`University Hospital` = `Total Expenditures and transfers from University Hospital Funds`,
+         `VA Hospital` = `Total Expenditures and transfers from VA Hospital Funds`,
+         `Other Hospital` = `Total Expenditures and transfers from Other Affiliated Hospital Funds`,
+         total = `Total Expenditures and Transfers from Hospital Funds`) %>% 
+   filter(school %in% c("Harvard", "Duke", "Washington U St Louis", "Johns Hopkins", "Stanford", "Columbia-Vagelos", "Michigan", "Vanderbilt", "Pittsburgh")) -> j
+
+j %>% 
+  pivot_longer(cols = -c("school", "total"),
+               names_to = "hospital_type", 
+               values_to = "funding") %>% 
+  mutate(funding = funding / 10^8) %>% 
+  ggplot(aes(funding, fct_reorder(school, total), fill = fct_rev(hospital_type))) +
+  geom_col() +
+  geom_text(aes(label = str_c("$", formatC(stat(x)*10^8, big.mark = ",", format = "d")), group = school), 
+            stat = 'summary', fun = sum, vjust = 0.5, hjust =-.1, size = 5) +
+  labs(title = "Hospital Revenue by Type of Hospital", 
+       y = "", 
+       x = "Dollars (Hundreds of Millions)", 
+       fill = "",
+       caption = "AAMC (2019)") +
+  scale_x_continuous(limits = c(0,9)) +
+  scale_fill_manual(values = hue_pal(c = 80)(3), 
+                    guide = guide_legend(reverse = TRUE)) +
+  theme(plot.title = element_text(size = 23),
+        plot.subtitle = element_text(size = 18),
+        axis.title = element_text(size = 18),
+        axis.text = element_text(size = 18, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 15),
+        legend.position = "top")
+  
+
+# j %>% 
+#   mutate(across(-c("school", "total"), ~round(.*100/total, digits = 2)))  %>% 
+#   pivot_longer(cols = -c("school", "total"),
+#                names_to = "hospital_type", 
+#                values_to = "percent") %>%
+#   inner_join(j) %>% 
+#   ggplot(aes(percent, fct_reorder(school, total), fill = fct_rev(hospital_type))) +
+#   geom_col() +
+#   geom_text(aes(label = if_else(percent >= 5, str_c(percent, "%"), "")),
+#             position = position_stack(vjust = 0.5),
+#             size = 3.5, 
+#             color = "black") +
+#    scale_x_continuous(labels = c("0%", "25%", "50%", "75%", "100%")) +
+#    labs(title = "Percent Hospital Revenue by Type of Hospital",
+#         subtitle = "Schools primarily receive funding from either university hospitals or other hospitals",
+#        y = "", 
+#        x = "Percent", 
+#        fill = "Hospital Type",
+#        caption = "AAMC (2019)") +
+#   theme(plot.title = element_text(size = 20),
+#         plot.subtitle = element_text(size = 15),
+#         legend.title =  element_text(size = 15),
+#         axis.text.y = element_text(size = 12),
+#          legend.text = element_text(size = 10))
+
+read_excel("aamc_hospital_type.xlsx") %>% 
+  rename(school = `...1`) %>% 
+  mutate(across(.cols = -school, ~str_replace_all(., "\\$|,", ""))) %>% 
+  mutate(across(.cols = -school, as.numeric)) %>% 
+  drop_na() %>% 
+  rename(`University Hospital` = `Total Expenditures and transfers from University Hospital Funds`,
+         `VA Hospital` = `Total Expenditures and transfers from VA Hospital Funds`,
+         `Other Hospital` = `Total Expenditures and transfers from Other Affiliated Hospital Funds`,
+         total = `Total Expenditures and Transfers from Hospital Funds`) %>% 
+  arrange(desc(total))
+```
+
+
+```{r hospital_programs, warning = FALSE, message=FALSE, fig.width = 12, fig.height = 11}
+read_excel("aamc_hospital_programs.xlsx") %>% 
+  rename(school = `...1`) %>% 
+  mutate(across(.cols = -school, ~str_replace_all(., "\\$|,", ""))) %>% 
+  mutate(across(.cols = -school, as.numeric)) %>% 
+  drop_na() %>% 
+  rename(`Purchased Services` = `Total Purchased Services`,
+         `Housestaff Stipends` = `Total Housestaff Stipends`,
+         `Clinical Investments` = `Total Hospital Investments in the Clinical Enterprise`,
+         `Strategic Support` = `Total Strategic Support for Medical School Programs`,
+         total = `Total Expenditures and Transfers from Hospital Funds`)  -> f
+
+f_percent_mean <- f %>% 
+  mutate(across(-c("school", "total"), ~. * 100/total)) %>%  
+  summarize(across(-c("school", "total"), ~mean(., na.rm = TRUE))) %>% 
+  mutate(school = "All School Mean") %>% 
+  mutate(total = 0)
+
+f %>% 
+  mutate(across(-c("school", "total"), ~. * 100/total)) %>% 
+   filter(school %in% c("Harvard", "Duke", "Washington U St Louis", "Johns Hopkins", "Stanford", "Columbia-Vagelos", "Michigan", "Vanderbilt")) %>% 
+  bind_rows(f_percent_mean) %>% 
+  pivot_longer(cols = -c("school", "total"), 
+               names_to = "recipient_type", 
+               values_to = "percent") %>% 
+  ggplot(aes(percent, fct_reorder(school, total), fill = fct_reorder(recipient_type, percent))) +
+  geom_col() +
+  geom_text(aes(label = if_else(percent >= 5, str_c(round(percent, digits = 0), "%"), "")),
+            position = position_stack(vjust = 0.5),
+            size = 5, 
+            color = "black") +
+  labs(title = "Percent Hospital Revenue to Recipient", 
+       x = "", 
+       y = "",
+       fill = "",
+       caption = "AAMC (2019)") +
+  scale_x_continuous(labels = c("0%", "25%", "50%", "75%", "100%")) +
+    scale_fill_manual(values = hue_pal(c = 70)(4), 
+                    guide = guide_legend(reverse = TRUE)) +
+    theme(plot.title = element_text(size = 23),
+        plot.subtitle = element_text(size = 18),
+        axis.title = element_text(size = 18),
+        axis.text = element_text(size = 18, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 15),
+        legend.position = "top")
+```
+
+
+```{r faculty, warning = FALSE, message= FALSE, fig.width = 10, fig.height = 8}
+read_delim("aamc_faculty.csv", delim = ";") %>% 
+  rename(school = X1) %>% 
+  select(-c(X5:X8)) %>% 
+  mutate(across(.cols = -school, ~str_replace_all(., ",", ""))) %>% 
+  mutate(across(.cols = -school, as.numeric)) %>% 
+  drop_na(school) %>% 
+  rename(pre_clinical = `Total Full-Time Basic Sciences Faculty`,
+         clinical = `Total Full-Time Clinical Faculty`,
+         total = `Total Full-Time Faculty`)  %>% 
+  filter(school %in% c("Harvard", "Duke", "Washington U St Louis", "Johns Hopkins", "Stanford", "Columbia-Vagelos", "Michigan", "Vanderbilt"))  -> k
+
+k %>% 
+  ggplot(aes(total, fct_reorder(school, total), 
+             fill = if_else(school == "Harvard", "Crimson", "Not"))) +
+  geom_col() +
+  scale_fill_manual(values = c("#990000", "grey50")) +
+  theme(legend.position = "none") +
+  labs(title = "All Faculty",
+       y = "",
+       x ="Count",
+       fill = "",
+       caption = "AAMC (2019)") +
+  scale_x_continuous(labels = scales::number_format()) +
+  theme(plot.title = element_text(size = 20),
+        plot.subtitle = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        axis.text = element_text(size = 15, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 15))
+
+k %>% 
+  ggplot(aes(pre_clinical, fct_reorder(school, pre_clinical),
+             fill = if_else(school == "Harvard", "Crimson", "Not"))) +
+  geom_col() +
+  scale_fill_manual(values = c("#990000", "grey50")) +
+  theme(legend.position = "none") +
+  labs(title = "Pre-Clinical Faculty",
+       y = "",
+       x ="Count",
+       caption = "AAMC (2019)") +
+  scale_x_continuous(labels = scales::number_format()) +
+  theme(plot.title = element_text(size = 20),
+        plot.subtitle = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        axis.text = element_text(size = 15, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 15))
+
+k %>% 
+  ggplot(aes(clinical, fct_reorder(school, clinical),
+             fill = if_else(school == "Harvard", "Crimson", "Not"))) +
+  geom_col() +
+  scale_fill_manual(values = c("#990000", "grey50")) +
+  theme(legend.position = "none") +
+  labs(title = "Clinical Faculty",
+       y = "",
+       x ="Count",
+       caption = "AAMC (2019)") +
+  scale_x_continuous(labels = scales::number_format()) +
+  theme(plot.title = element_text(size = 20),
+        plot.subtitle = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        axis.text = element_text(size = 15, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 15))
+
+k 
+```
+
+```{r, warning = FALSE, message=FALSE, fig.width = 10, fig.height = 8}
+b_percent_filtered %>% 
+  select(school, total:unrecorded_dollars) %>%
+  inner_join(k, by = "school") %>% 
+  rename(total_funding = total.x,
+         total_faculty = total.y) %>% 
+  mutate(funding_per_all = total_funding / total_faculty) %>% 
+  mutate(recorded_per_pre = recorded_dollars / pre_clinical) %>% 
+  mutate(unrecorded_per_clin = unrecorded_dollars / clinical) -> b_manip
+
+
+b_manip %>% 
+  ggplot(aes(funding_per_all, fct_reorder(school, funding_per_all), 
+             fill = if_else(school == "Harvard", "Crimson", "Not"))) +
+  geom_col() +
+  geom_text(aes(label = str_c("$", formatC(stat(x), big.mark = ",", format = "d")), group = school), 
+            stat = 'summary', fun = sum, vjust = 0.5, hjust =-0.1, size = 5) +
+  labs(title = "Federal Grant Dollars per Faculty",
+       subtitle = "Harvard doesn't lead in grants when the size of its faculty is considered",
+       y = "", 
+       x = "Dollars",
+       caption = "AAMC (2019)")  +
+  scale_fill_manual(values = c("#990000", "grey50")) +
+  theme(legend.position = "none") +
+  scale_x_continuous(limits = c(0, 600000), labels = scales::number_format()) +
+  theme(plot.title = element_text(size = 20),
+        plot.subtitle = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        axis.text = element_text(size = 15, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 15))
+
+b_manip %>% 
+  ggplot(aes(recorded_per_pre, fct_reorder(school, recorded_per_pre),
+             fill = if_else(school == "Harvard", "Crimson", "Not"))) +
+  geom_col() +
+  labs(title = "Recorded Federal Grant Dollars per Pre-Clinical Faculty",
+       y = "", 
+       x = "Dollars",
+       caption = "AAMC (2019)") +
+  scale_fill_manual(values = c("#990000", "grey50")) +
+  theme(legend.position = "none") +
+  scale_x_continuous(labels = scales::number_format()) +
+  theme(plot.title = element_text(size = 18),
+        plot.subtitle = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        axis.text = element_text(size = 15, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 15))
+
+
+b_manip %>% 
+  ggplot(aes(unrecorded_per_clin, fct_reorder(school, unrecorded_per_clin),
+             fill = if_else(school == "Harvard", "Crimson", "Not"))) +
+  geom_col() +
+  labs(title = "Unrecorded Federal Grant Dollars per Clinical Faculty",
+       y = "", 
+       x = "Dollars",
+       caption = "AAMC (2019)") +
+  scale_fill_manual(values = c("#990000", "grey50")) +
+  theme(legend.position = "none")+
+  scale_x_continuous(labels = scales::number_format()) +
+  theme(plot.title = element_text(size = 18),
+        plot.subtitle = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        axis.text = element_text(size = 15, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 15))
+```
+
+```{r, warning = FALSE, message=FALSE, fig.width = 10, fig.height = 8}
+read_csv("../departments/department_list/full_nih_funding.csv") %>% 
+  filter(school %in% c("Harvard", "Duke", "Washington U St Louis", "Johns Hopkins", "Stanford", "Columbia-Vagelos", "Michigan", "Vanderbilt")) %>% 
+  group_by(school) %>% 
+  summarize(total_funding = sum(`FUNDING`, na.rm = TRUE)) %>% 
+  arrange(desc(total_funding)) %>% 
+  inner_join(k) %>% 
+  mutate(funding_per_pre_clinical = total_funding / pre_clinical) %>% 
+  arrange(desc(funding_per_pre_clinical)) %>% 
+  ggplot(aes(funding_per_pre_clinical, fct_reorder(school, funding_per_pre_clinical))) +
+  geom_col()
+
+read_csv("../departments/department_list/test_2019_peer_schools.csv") %>% 
+  group_by(school) %>% 
+  summarize(total_funding = sum(`total_funding`, na.rm = TRUE)) %>% 
+  arrange(desc(total_funding)) %>% 
+  inner_join(k) %>% 
+  mutate(funding_per_pre_clinical = total_funding / pre_clinical) %>% 
+  arrange(desc(funding_per_pre_clinical)) %>% 
+  ggplot(aes(funding_per_pre_clinical, fct_reorder(school, funding_per_pre_clinical),
+             fill = if_else(school == "Harvard", "Crimson", "Not"))) +
+  geom_col() +
+   labs(title = "NIH Grant Dollars to Basic Science Dept. per Pre-Clinical Faculty",
+       y = "", 
+       x = "Dollars",
+       caption = "BRIMR Summary of NIH eReport (2019), IPP Quad Competitors List (2021), AAMC (2019)") +
+  scale_fill_manual(values = c("#990000", "grey50")) +
+  theme(legend.position = "none") +
+  scale_x_continuous(labels = scales::number_format()) +
+  theme(plot.title = element_text(size = 18),
+        plot.subtitle = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        axis.text = element_text(size = 15, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 12))
+
+read_csv("../departments/department_list/test_2019_peer_schools.csv") %>% 
+  group_by(school) %>% 
+  summarize(total_funding = sum(`total_funding`, na.rm = TRUE)) %>% 
+  arrange(desc(total_funding)) %>% 
+  inner_join(k) %>% 
+  arrange(desc(total_funding)) %>% 
+  ggplot(aes(total_funding, fct_reorder(school, total_funding),
+             fill = if_else(school == "Harvard", "Crimson", "Not"))) +
+  geom_col() +
+   labs(title = "NIH Grant Dollars to Basic Science Dept. per Pre-Clinical Faculty",
+       y = "", 
+       x = "Dollars",
+       caption = "BRIMR Summary of NIH eReport (2019), IPP Quad Competitors List (2021), AAMC (2019)") +
+  scale_fill_manual(values = c("#990000", "grey50")) +
+  theme(legend.position = "none") +
+  scale_x_continuous(labels = scales::number_format()) +
+  theme(plot.title = element_text(size = 18),
+        plot.subtitle = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        axis.text = element_text(size = 15, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 12))
+
+b_manip %>% 
+  ggplot(aes(recorded_dollars, fct_reorder(school, recorded_dollars), 
+             fill = if_else(school == "Harvard", "Crimson", "Not"))) +
+  geom_col() +
+  geom_text(aes(label = str_c("$", formatC(stat(x), big.mark = ",", format = "d")), group = school), 
+            stat = 'summary', fun = sum, vjust = 0.5, hjust =-0.1, size = 5) +
+  labs(title = "Recorded Federal Grant Dollars per Faculty",
+       y = "", 
+       x = "Dollars",
+       caption = "AAMC (2019)")  +
+  scale_fill_manual(values = c("#990000", "grey50")) +
+  theme(legend.position = "none") +
+  scale_x_continuous(limits = c(0, 6*10^8), labels = scales::number_format()) +
+  theme(plot.title = element_text(size = 20),
+        plot.subtitle = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        axis.text = element_text(size = 15, color = "black"),
+         legend.text = element_text(size = 15),
+        plot.caption = element_text(size = 15))
+
+b_manip
+```
+
